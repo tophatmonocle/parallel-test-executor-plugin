@@ -92,7 +92,7 @@ public class ParallelTestExecutorUnitTest {
         testResult.tally();
         when(action.getResult()).thenReturn(testResult);
 
-        List<InclusionExclusionPattern> splits = ParallelTestExecutor.findTestSplits(parallelism, build, listener, false, testMode);
+        List<InclusionExclusionPattern> splits = ParallelTestExecutor.findTestSplits(parallelism, build, listener, false, testMode, ".*", null);
         assertEquals(expectedSplitSize, splits.size());
         for (InclusionExclusionPattern split : splits) {
             assertFalse(split.isIncludes());
@@ -116,7 +116,7 @@ public class ParallelTestExecutorUnitTest {
         testResult.tally();
         when(action.getResult()).thenReturn(testResult);
 
-        List<InclusionExclusionPattern> splits = ParallelTestExecutor.findTestSplits(parallelism, build, listener, true, testMode);
+        List<InclusionExclusionPattern> splits = ParallelTestExecutor.findTestSplits(parallelism, build, listener, true, testMode, ".*", null);
         assertEquals(expectedSplitSize, splits.size());
         List<String> exclusions = new ArrayList<>(splits.get(0).getList());
         List<String> inclusions = new ArrayList<>();

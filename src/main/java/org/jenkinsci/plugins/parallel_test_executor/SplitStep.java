@@ -24,6 +24,8 @@ public final class SplitStep extends AbstractStepImpl {
 
     private boolean generateInclusions;
     private TestMode testMode;
+    private String junitFilesToConsider;
+    private String siblingBranchName;
 
     @DataBoundConstructor public SplitStep(Parallelism parallelism) {
         this.parallelism = parallelism;
@@ -40,6 +42,28 @@ public final class SplitStep extends AbstractStepImpl {
         this.generateInclusions = generateInclusions;
     }
     
+    public String getJunitFilesToConsider() {
+        if (junitFilesToConsider == null) {
+            return ".*";
+        } else {
+            return junitFilesToConsider;
+        }
+    }
+
+    @DataBoundSetter
+    public void setJunitFilesToConsider(String junitFilesToConsider) {
+        this.junitFilesToConsider = junitFilesToConsider;
+    }
+
+    public String getSiblingBranchName() {
+        return siblingBranchName;
+    }
+
+    @DataBoundSetter
+    public void setSiblingBranchName(String siblingBranchName) {
+        this.siblingBranchName = siblingBranchName;
+    }
+
     public TestMode getTestMode() {
         if (testMode == null) {
             return TestMode.JAVA;
@@ -78,11 +102,16 @@ public final class SplitStep extends AbstractStepImpl {
         @StepContextParameter private transient TaskListener listener;
 
         @Override protected List<?> run() throws Exception {
+            List<InclusionExclusionPattern> splits = new ArrayList<>();
+
+            splits = ParallelTestExecutor.findTestSplits(step.parallelism, build, listener, step.generateInclusions,
+                    step.getTestMode(), step.getJunitFilesToConsider(), step.siblingBranchName);
+
             if (step.generateInclusions) {
-                return ParallelTestExecutor.findTestSplits(step.parallelism, build, listener, step.generateInclusions, step.getTestMode());
+                return splits;
             } else {
                 List<List<String>> result = new ArrayList<>();
-                for (InclusionExclusionPattern pattern : ParallelTestExecutor.findTestSplits(step.parallelism, build, listener, step.generateInclusions, step.getTestMode())) {
+                for (InclusionExclusionPattern pattern : splits) {
                     result.add(pattern.getList());
                 }
                 return result;

@@ -14,9 +14,12 @@ import hudson.tasks.Builder;
 import hudson.tasks.junit.CaseResult;
 import hudson.tasks.junit.ClassResult;
 import hudson.tasks.junit.JUnitResultArchiver;
+import hudson.tasks.junit.SuiteResult;
 import hudson.tasks.test.AbstractTestResultAction;
 import hudson.tasks.test.TabulatedResult;
 import hudson.tasks.test.TestResult;
+import jenkins.model.Jenkins;
+
 import org.kohsuke.stapler.AncestorInPath;
 import org.kohsuke.stapler.DataBoundConstructor;
 import org.kohsuke.stapler.DataBoundSetter;
@@ -28,6 +31,9 @@ import java.io.OutputStreamWriter;
 import java.io.PrintWriter;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
 import org.apache.commons.io.Charsets;
 
 import javax.annotation.CheckForNull;
@@ -87,7 +93,7 @@ public class ParallelTestExecutor extends Builder {
     public boolean isArchiveTestResults() {
         return !doNotArchiveTestResults;
     }
-    
+
     public TestMode getTestMode() {
         if (testMode == null) {
             return TestMode.JAVA;
@@ -137,7 +143,7 @@ public class ParallelTestExecutor extends Builder {
         }
         FilePath dir = workspace.child("test-splits");
         dir.deleteRecursive();
-        List<InclusionExclusionPattern> splits = findTestSplits(parallelism, build, listener, includesPatternFile != null, getTestMode());
+        List<InclusionExclusionPattern> splits = findTestSplits(parallelism, build, listener, includesPatternFile != null, getTestMode(), ".*", null);
         for (int i = 0; i < splits.size(); i++) {
             InclusionExclusionPattern pattern = splits.get(i);
             try (OutputStream os = dir.child("split." + i + "." + (pattern.isIncludes() ? "include" : "exclude") + ".txt").write();
@@ -158,15 +164,20 @@ public class ParallelTestExecutor extends Builder {
         return true;
     }
 
-    static List<InclusionExclusionPattern> findTestSplits(Parallelism parallelism, Run<?,?> build, TaskListener listener, boolean generateInclusions, TestMode testMode) {
-        TestResult tr = findPreviousTestResult(build, listener);
+    static List<InclusionExclusionPattern> findTestSplits(Parallelism parallelism, Run<?, ?> build,
+            TaskListener listener, boolean generateInclusions, TestMode testMode, String junitFilesToConsider, String siblingBranchName) {
+        TestResult tr = findPreviousTestResult(build, listener, siblingBranchName);
         if (tr == null) {
             listener.getLogger().println("No record available, so executing everything in one place");
             return Collections.singletonList(new InclusionExclusionPattern(Collections.<String>emptyList(), false));
         } else {
 
             Map<String/*fully qualified class/case name*/, TestEntity> data = new TreeMap<>();
-            collect(tr, data, testMode);
+            if (testMode == TestMode.JAVA) {
+                collectJavaTests(tr, data);
+            } else {
+                collectNonJavaTests(tr, data, testMode, junitFilesToConsider);
+            }
 
             // sort in the descending order of the duration
             List<TestEntity> sorted = new ArrayList<>(data.values());
@@ -277,31 +288,53 @@ public class ParallelTestExecutor extends Builder {
     /**
      * Recursive visits the structure inside {@link hudson.tasks.test.TestResult}.
      */
-    static private void collect(TestResult r, Map<String, TestEntity> data, TestMode testMode) {
+    static private void collectJavaTests(TestResult r, Map<String, TestEntity> data) {
         if (r instanceof ClassResult) {
-            ClassResult classResult = (ClassResult) r;
-            if(testMode == TestMode.JAVA) {
-                TestClass dp = new TestClass(classResult);
-                data.put(dp.className, dp);
-            } else {
-                for(CaseResult caseResult : classResult.getChildren()) {
-                    TestCase dp = new TestCase(caseResult, testMode == TestMode.CLASSANDTESTCASENAME);
-                    data.put(dp.output, dp);
-                }
-            }
-            return; // no need to go deeper
-        }
-        if (r instanceof TabulatedResult) {
+            TestClass dp = new TestClass((ClassResult) r);
+            data.put(dp.className, dp);
+        } else if (r instanceof TabulatedResult) {
             TabulatedResult tr = (TabulatedResult) r;
             for (TestResult child : tr.getChildren()) {
-                collect(child, data, testMode);
+                collectJavaTests(child, data);
             }
         }
     }
 
-    private static TestResult findPreviousTestResult(Run<?, ?> b, TaskListener listener) {
+    static private void collectNonJavaTests(TestResult r, Map<String, TestEntity> data, TestMode testMode, String junitFilesToConsider) {
+        hudson.tasks.junit.TestResult testResult = (hudson.tasks.junit.TestResult) r;
+        Pattern filePattern = Pattern.compile(junitFilesToConsider);
+        for (SuiteResult suite : testResult.getSuites()) {
+            Matcher fileMatcher = filePattern.matcher(suite.getFile());
+            if (!fileMatcher.matches()) {
+                continue;
+            }
+            for (CaseResult caseResult : suite.getCases()) {
+                TestCase dp = new TestCase(caseResult, testMode);
+                data.put(dp.output, dp);
+            }
+        }
+    }
+
+    private static Run<?, ?> getSiblingBranchBuild(Job currentBranch, String siblingName) {
+        ItemGroup multibranchJob = currentBranch.getParent();
+        if (multibranchJob == null) {
+            return null;
+        }
+        Job siblingJob = Jenkins.getInstance().getItem(siblingName, multibranchJob, Job.class);
+        if (siblingJob == null) {
+            return null;
+        }
+        return siblingJob.getLastBuild();
+    }
+
+    private static TestResult findPreviousTestResult(Run<?, ?> b, TaskListener listener, String siblingBranchName) {
+        Boolean consideredSiblingBranch = siblingBranchName == null;
+        Job currentBranch = b.getParent();
         for (int i = 0; i < NUMBER_OF_BUILDS_TO_SEARCH; i++) {// limit the search to a small number to avoid loading too much
             b = b.getPreviousBuild();
+            if (b == null && !consideredSiblingBranch) {
+                b = getSiblingBranchBuild(currentBranch, siblingBranchName);
+            };
             if (b == null) break;
             if(!RESULTS_OF_BUILDS_TO_CONSIDER.contains(b.getResult())) continue;
 
