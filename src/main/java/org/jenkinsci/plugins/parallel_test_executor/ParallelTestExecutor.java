@@ -43,7 +43,7 @@ import javax.annotation.CheckForNull;
  */
 public class ParallelTestExecutor extends Builder {
     public static final int NUMBER_OF_BUILDS_TO_SEARCH = 20;
-    public static final ImmutableSet<Result> RESULTS_OF_BUILDS_TO_CONSIDER = ImmutableSet.of(Result.SUCCESS, Result.UNSTABLE);
+    public static final ImmutableSet<Result> RESULTS_OF_BUILDS_TO_CONSIDER = ImmutableSet.of(Result.SUCCESS);
     private Parallelism parallelism;
 
     private String testJob;
